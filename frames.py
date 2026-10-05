@@ -61,8 +61,27 @@ def overlay(base, other):
 #   頭-首-胴-脚のみ。x範囲 2-11 (10幅) はエレベーター内寸とぴったり一致。
 # ---------------------------------------------------------------------------
 
+def tube_row(g, x0, x1, y, upper):
+    """巻いたケーブル一段の、上半分(upper)か下半分の1行。左上からの柔らかい光で、
+       手前（左）が明るく奥（右）へ沈む。右端だけ照り返しでわずかに戻す（輪郭のため）"""
+    n = max(1, x1 - x0)
+    for x in range(x0, x1 + 1):
+        t = (x - x0) / n
+        if x == x1:
+            ch = "c"
+        elif upper:
+            ch = "e" if x == x0 else "d" if t < 0.35 else "c" if t < 0.7 else "b"
+        else:
+            ch = "d" if x == x0 else "c" if t < 0.3 else "b" if t < 0.75 else "a"
+        put(g, x, y, ch)
+
+
 def robot(dx=0, lean=0, crouch=0, compact=False, banzai=False, hop=False):
-    """dx: 全体の横シフト（エレベーターへの移動用）
+    """CPUロボット（マットな黒いケーブルを饅頭状に巻いて、人の形に整えたもの・カラー）
+       つやは無い。左上からの柔らかい光の明暗（e→d→c→b→a）と、段の間の溝だけで巻きの立体を出す。
+       色の文字: a=溝・いちばん深い黒 b=芯の黒 c=中間 d=光の当たる面 e=手前の縁
+                 f=プラグの先（つや消しの灰色。目・手・アンテナ）
+       dx: 全体の横シフト（エレベーターへの移動用）
        lean: 上半身（頭・首・胴・腕）だけを足に対して左右にずらす（ゆらゆら用）
        crouch: 上半身を1px落として脚を1px縮める（EDMのドゥンドゥン用）
        compact: 腕とアンテナを省いた細身シルエット（エレベーターに入る用）
@@ -70,39 +89,52 @@ def robot(dx=0, lean=0, crouch=0, compact=False, banzai=False, hop=False):
        hop: 足先を1px浮かせる＝跳ねた瞬間（最高潮用）
     """
     g = blank()
+    ux, uy = dx + lean, crouch
 
-    # 脚（常に基準位置、crouch分だけ短縮）
-    leg_top = 13 + crouch
-    leg_bot = 16 if hop else 17
-    if leg_top <= leg_bot:
-        fill_rect(g, 4 + dx, 5 + dx, leg_top, leg_bot, True)
-        fill_rect(g, 8 + dx, 9 + dx, leg_top, leg_bot, True)
+    # 脚: 二本撚りのケーブル。左が光の面、右が沈む面、撚り目ごとに溝。足先は丸めて1pxに
+    leg_top, leg_bot = 13 + crouch, 16 if hop else 17
+    for lx in (4, 8):
+        for y in range(leg_top, leg_bot):
+            groove = (y - leg_top) % 2 == 1
+            put(g, lx + dx, y, "c" if groove else "d")
+            put(g, lx + 1 + dx, y, "a" if groove else "b")
+        put(g, lx + (1 if lx == 4 else 0) + dx, leg_bot, "c")   # 足先（内側に寄せて丸く）
 
-    ux = dx + lean  # 上半身のx
-    uy = crouch      # 上半身のyオフセット
-
+    # アンテナ: 巻き終わりの端が一本立って、先にプラグ
     if not compact:
-        # アンテナ
-        set_px(g, 7 + ux, 0 + uy, True)
-        set_px(g, 7 + ux, 1 + uy, True)
-    # 頭
-    fill_rect(g, 4 + ux, 9 + ux, 2 + uy, 5 + uy, True)
-    # 目穴（透過）
-    set_px(g, 5 + ux, 3 + uy, False)
-    set_px(g, 8 + ux, 3 + uy, False)
+        put(g, 7 + ux, 0 + uy, "f")
+        put(g, 7 + ux, 1 + uy, "b")
+    # 頭: 饅頭状のとぐろ。段ごとに幅を変えて角のない丸に、目は顔を出したプラグの先
+    tube_row(g, 5 + ux, 8 + ux, 1 + uy, True)
+    tube_row(g, 4 + ux, 9 + ux, 2 + uy, True)
+    tube_row(g, 3 + ux, 10 + ux, 3 + uy, False)
+    tube_row(g, 3 + ux, 10 + ux, 4 + uy, True)
+    tube_row(g, 4 + ux, 9 + ux, 5 + uy, False)
+    put(g, 5 + ux, 3 + uy, "f")
+    put(g, 8 + ux, 3 + uy, "f")
     # 首
-    fill_rect(g, 6 + ux, 7 + ux, 6 + uy, 6 + uy, True)
-    # 胴
-    fill_rect(g, 2 + ux, 11 + ux, 7 + uy, 12 + uy, True)
-    if banzai:
-        # 振り上げた腕（肩から頭の横へ）
-        fill_rect(g, 0 + ux, 1 + ux, 1 + uy, 7 + uy, True)
-        fill_rect(g, 12 + ux, 13 + ux, 1 + uy, 7 + uy, True)
-    elif not compact:
-        # 腕
-        fill_rect(g, 0 + ux, 1 + ux, 7 + uy, 11 + uy, True)
-        fill_rect(g, 12 + ux, 13 + ux, 7 + uy, 11 + uy, True)
+    put(g, 6 + ux, 6 + uy, "c")
+    put(g, 7 + ux, 6 + uy, "a")
+    # 胴: 三段に積んだ巻き。上下の段を細くして角のない卵形に
+    for y, (x0, x1) in zip(range(7, 13), ((4, 9), (3, 10), (2, 11), (2, 11), (3, 10), (4, 9))):
+        tube_row(g, x0 + ux, x1 + ux, y + uy, y % 2 == 1)
 
+    # 腕: 束ねたケーブルのカプセル形。肩側も先も1pxにすぼめて角を作らない、先はプラグ
+    #     胴が卵形になったので、胴の一番太い段（9〜10行目）の横に付ける
+    def arm(ax, y0, y1, plug_y, root_y):
+        inner = ax + 1 if ax == 0 else ax                # 胴に近い側の列
+        for y in range(y0, y1 + 1):
+            groove = (y - y0) % 2 == 1
+            put(g, ax + ux, y + uy, "c" if groove else "d")
+            put(g, ax + 1 + ux, y + uy, "a" if groove else "b")
+        put(g, inner + ux, root_y + uy, "c")             # 付け根（1px）
+        put(g, inner + ux, plug_y + uy, "f")             # 先のプラグ（1px）
+    if banzai:
+        for ax in (0, 12):
+            arm(ax, 4, 9, 3, 10)
+    elif not compact:
+        for ax in (0, 12):
+            arm(ax, 9, 11, 12, 8)
     return g
 
 
@@ -258,7 +290,7 @@ def make_seqs(rb, sp="X"):
     }
 
 
-CPU_SEQS = make_seqs(robot)
+CPU_SEQS = make_seqs(robot, sp="d")   # 黒い精子が黒いケーブルのロボットに変態する
 GPU_SEQS = make_seqs(gpu_robot, sp="G")   # 緑の精子が緑のロボットに変態する
 
 
@@ -284,8 +316,13 @@ def write_png(path, pixels, w, h):
 
 # プレビューの色（main.m の描画色と揃える）
 PALETTE = {
-    True:  {"X": (235, 235, 240), "S": (196, 202, 210), "G": (46, 204, 92), "R": (255, 48, 48), "bg": (28, 30, 40)},
-    False: {"X": (20, 20, 25), "S": (128, 134, 142), "G": (24, 160, 64), "R": (225, 30, 30), "bg": (236, 236, 240)},
+    True:  {"X": (235, 235, 240), "S": (196, 202, 210), "G": (46, 204, 92), "R": (255, 48, 48),
+            # 暗いバーでは背景に沈むので、強めの光が当たっている想定で明暗の幅ごと持ち上げる（つやは足さない）
+            "a": (22, 22, 24), "b": (46, 46, 50), "c": (68, 68, 73), "d": (94, 94, 100), "e": (122, 122, 128),
+            "f": (172, 174, 180), "bg": (28, 30, 40)},
+    False: {"X": (20, 20, 25), "S": (128, 134, 142), "G": (24, 160, 64), "R": (225, 30, 30),
+            "a": (6, 6, 8), "b": (20, 20, 23), "c": (36, 36, 40), "d": (56, 56, 61), "e": (78, 78, 84),
+            "f": (112, 114, 120), "bg": (236, 236, 240)},
 }
 
 
