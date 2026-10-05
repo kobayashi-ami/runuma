@@ -219,10 +219,10 @@ def box(mode="closed", grow=None, wipe_top=None):
 
 
 # ---------------------------------------------------------------------------
-# 精子（エレベーター再登場演出）: 丸い頭 + くねる尻尾
+# おたまじゃくし（エレベーター再登場演出）: 丸い頭 + くねる尻尾
 # ---------------------------------------------------------------------------
 
-def sperm(hx, hy, wiggle=0, ch="X"):
+def tadpole(hx, hy, wiggle=0, ch="X"):
     g = blank()
     for x in range(hx, hx + 3):                 # 頭（3x2）
         for y in (hy, hy + 1):
@@ -240,7 +240,7 @@ def sperm(hx, hy, wiggle=0, ch="X"):
 # ---------------------------------------------------------------------------
 
 def make_seqs(rb, sp="X"):
-    """rb: ロボットを描く関数（robot / gpu_robot）、sp: 精子の色"""
+    """rb: ロボットを描く関数（robot / gpu_robot）、sp: おたまじゃくしの色"""
     IDLE = [rb()]                                              # 0: 微動だにしない
 
     SWAY = [rb(lean=0), rb(lean=1), rb(lean=0), rb(lean=-1)]   # 1: ゆらゆら
@@ -269,16 +269,16 @@ def make_seqs(rb, sp="X"):
         blank(),                                                    # 元の場所は空白になって、無くなる
     ]
 
-    # --- 復帰シーケンス（4 → 0/1/2/3 へ戻るときに1回だけ再生・エレベーター×精子） ---
+    # --- 復帰シーケンス（4 → 0/1/2/3 へ戻るときに1回だけ再生・エレベーター×おたまじゃくし） ---
     _box_closed_full_empty = box("closed")
     REAPPEAR = [
         blank(),
         box("closed", grow=6),                                      # 箱が降ってくる
         box("closed", grow=12),
         _box_closed_full_empty,                                     # 着地・閉（中身はまだ見えない）
-        overlay(sperm(19, 8, wiggle=0, ch=sp), box("open")),                # 扉が開く…中には精子
-        overlay(sperm(12, 8, wiggle=1, ch=sp), box("open")),                # 泳いで出てくる（くねり1）
-        overlay(sperm(5, 8, wiggle=0, ch=sp), box("open")),                 # くねり2、ロボットの定位置まで到達
+        overlay(tadpole(19, 8, wiggle=0, ch=sp), box("open")),                # 扉が開く…中にはおたまじゃくし
+        overlay(tadpole(12, 8, wiggle=1, ch=sp), box("open")),                # 泳いで出てくる（くねり1）
+        overlay(tadpole(5, 8, wiggle=0, ch=sp), box("open")),                 # くねり2、ロボットの定位置まで到達
         overlay(rb(), box("open")),                               # 変態完了＝ロボットの姿に
         _box_closed_full_with_robot,                                 # 扉が閉まる（ロボットは外＝定位置）
         overlay(rb(), box("closed", wipe_top=9)),                 # 箱が上へスライドして去っていく
@@ -290,8 +290,8 @@ def make_seqs(rb, sp="X"):
     }
 
 
-CPU_SEQS = make_seqs(robot, sp="d")   # 黒い精子が黒いケーブルのロボットに変態する
-GPU_SEQS = make_seqs(gpu_robot, sp="G")   # 緑の精子が緑のロボットに変態する
+CPU_SEQS = make_seqs(robot, sp="d")   # 黒いおたまじゃくしが黒いケーブルのロボットに変態する
+GPU_SEQS = make_seqs(gpu_robot, sp="G")   # 緑のおたまじゃくしが緑のロボットに変態する
 
 
 
