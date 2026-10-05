@@ -163,6 +163,90 @@ static const char *kBounce[2][18] = {
     },
 };
 
+// レベル4: 最高潮（80%超え、退勤まで粘っている間）— 万歳したまま沈んで溜め→跳ねる（4フレーム）
+static const char *kClimax[4][18] = {
+    {
+        "............................",
+        ".......X....................",
+        "XX.....X....XX..............",
+        "XX..XXXXXX..XX..............",
+        "XX..X.XX.X..XX..............",
+        "XX..XXXXXX..XX..............",
+        "XX..XXXXXX..XX..............",
+        "XX....XX....XX..............",
+        "XXXXXXXXXXXXXX..............",
+        "..XXXXXXXXXX................",
+        "..XXXXXXXXXX................",
+        "..XXXXXXXXXX................",
+        "..XXXXXXXXXX................",
+        "..XXXXXXXXXX................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+    },
+    {
+        ".......X....................",
+        "XX.....X....XX..............",
+        "XX..XXXXXX..XX..............",
+        "XX..X.XX.X..XX..............",
+        "XX..XXXXXX..XX..............",
+        "XX..XXXXXX..XX..............",
+        "XX....XX....XX..............",
+        "XXXXXXXXXXXXXX..............",
+        "..XXXXXXXXXX................",
+        "..XXXXXXXXXX................",
+        "..XXXXXXXXXX................",
+        "..XXXXXXXXXX................",
+        "..XXXXXXXXXX................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "............................",
+    },
+    {
+        "............................",
+        ".......X....................",
+        "XX.....X....XX..............",
+        "XX..XXXXXX..XX..............",
+        "XX..X.XX.X..XX..............",
+        "XX..XXXXXX..XX..............",
+        "XX..XXXXXX..XX..............",
+        "XX....XX....XX..............",
+        "XXXXXXXXXXXXXX..............",
+        "..XXXXXXXXXX................",
+        "..XXXXXXXXXX................",
+        "..XXXXXXXXXX................",
+        "..XXXXXXXXXX................",
+        "..XXXXXXXXXX................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+    },
+    {
+        "........X...................",
+        ".XX.....X....XX.............",
+        ".XX..XXXXXX..XX.............",
+        ".XX..X.XX.X..XX.............",
+        ".XX..XXXXXX..XX.............",
+        ".XX..XXXXXX..XX.............",
+        ".XX....XX....XX.............",
+        ".XXXXXXXXXXXXXX.............",
+        "...XXXXXXXXXX...............",
+        "...XXXXXXXXXX...............",
+        "...XXXXXXXXXX...............",
+        "...XXXXXXXXXX...............",
+        "...XXXXXXXXXX...............",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "............................",
+    },
+};
+
 // レベル4に入ったあとの定常状態：完全に空白（職務放棄でメニューバーから消える）
 static const char *kBlank[1][18] = {
     {
@@ -618,6 +702,9 @@ static const char *kReappear[11][18] = {
 };
 
 static const double kOneShotInterval = 0.09; // 職務放棄/復帰シーケンスの1コマの長さ
+static const double kSampleInterval = 2.0;   // 負荷を測る間隔
+static const double kHoldOutSecs = 60.0;     // 80%超えがこれだけ続いたら退勤（それまでは最高潮で粘る）
+static const double kSmoothing = 0.4;        // 新しい測定値の重み。GPUは2秒ごとの瞬間値が30〜90%台で暴れるので均す
 
 // 舞台: 左にCPUロボット、まんなかに共有のエレベーター、右に鏡写しのGPUロボット
 //   CPUの層はフレームをそのまま x=0.. に置く。GPUの層は左右反転して x = kStageW-1-c に置く。
@@ -678,14 +765,21 @@ typedef NS_ENUM(NSInteger, AnimMode) {
 @interface Bot : NSObject {
 @public
     AnimMode mode;
-    int level;   // 0..4（4=職務放棄）
+    int level;   // 0..5（4=最高潮、5=職務放棄）
     int frame;
-    double load; // 0..1
+    double load; // 0..1（均した値。テンションもメニュー表示もこれ）
+    BOOL measured; // 初回の測定値はそのまま入れる
+    double hotSecs; // 80%超えが続いている秒数（割ったら0に戻る）
     NSTimer *timer;
 }
 @end
 @implementation Bot
 @end
+
+static void feed(Bot *b, double raw) {
+    b->load = b->measured ? b->load + (raw - b->load) * kSmoothing : raw;
+    b->measured = YES;
+}
 
 @interface UmaApp : NSObject <NSApplicationDelegate, NSMenuDelegate>
 @end
@@ -730,24 +824,22 @@ typedef NS_ENUM(NSInteger, AnimMode) {
     [self sampleStats]; // 初回（差分の基準を作る）
 
     // 起動時はいきなりシーケンスを再生せず、現在の負荷に応じた状態へ直接入る
-    for (Bot *b in @[_cpuBot, _gpuBot]) {
-        int initial = [self levelForLoad:b->load];
-        b->level = initial;
-        if (initial == 4) b->mode = AnimModeBlankHold;
-        else [self restartLoop:b level:initial];
-    }
+    // （いきなり退勤はしない。80%超えなら最高潮から粘り始める）
+    for (Bot *b in @[_cpuBot, _gpuBot])
+        [self restartLoop:b level:[self levelForLoad:b->load]];
     [self updateJam];
     [self render];
 
     // 2秒ごとに CPU / GPU / ネットワークをサンプリング
-    NSTimer *sample = [NSTimer timerWithTimeInterval:2.0 target:self
+    NSTimer *sample = [NSTimer timerWithTimeInterval:kSampleInterval target:self
                                             selector:@selector(sampleTick:)
                                             userInfo:nil repeats:YES];
     [[NSRunLoop mainRunLoop] addTimer:sample forMode:NSRunLoopCommonModes];
 }
 
 // 使用率を5段階に区切ってテンションレベルを決める（CPUもGPUも同じ境界）
-//   〜8%: 0(静止) / 〜30%: 1(ゆらゆら) / 〜55%: 2(ドゥンドゥン) / 〜80%: 3(BPMアップ) / それ以上: 4(職務放棄)
+//   〜8%: 0(静止) / 〜30%: 1(ゆらゆら) / 〜55%: 2(ドゥンドゥン) / 〜80%: 3(BPMアップ) / それ以上: 4(最高潮)
+//   5(職務放棄)は負荷だけでは決まらない。4が kHoldOutSecs 続いたときだけ applyLoad で入る
 - (int)levelForLoad:(double)load {
     if (load < 0.08) return 0;
     if (load < 0.30) return 1;
@@ -761,6 +853,7 @@ typedef NS_ENUM(NSInteger, AnimMode) {
         case 1: return 0.35;  // ゆらゆら
         case 2: return 0.22;  // ドゥンドゥン
         case 3: return 0.11;  // ドゥンドゥン（BPMアップ）
+        case 4: return 0.10;  // 最高潮
         default: return 1.0;  // レベル0は1フレームなので実質無関係
     }
 }
@@ -769,6 +862,7 @@ typedef NS_ENUM(NSInteger, AnimMode) {
     switch (level) {
         case 1: return 4;
         case 2: case 3: return 2;
+        case 4: return 4;
         default: return 1;
     }
 }
@@ -779,6 +873,7 @@ typedef NS_ENUM(NSInteger, AnimMode) {
         case 1: return @"ゆらゆら";
         case 2: return @"ノリノリ";
         case 3: return @"本気ノリノリ";
+        case 4: return @"最高潮";
         default: return @"職務放棄";
     }
 }
@@ -793,6 +888,7 @@ typedef NS_ENUM(NSInteger, AnimMode) {
             switch (b->level) {
                 case 0: return kIdle[0];
                 case 1: return kSway[b->frame];
+                case 4: return kClimax[anti ? (b->frame + 1) % 4 : b->frame];
                 default: return kBounce[anti ? 1 - b->frame : b->frame];
             }
         case AnimModePlayVanish:   return kVanish[b->frame];
@@ -803,7 +899,7 @@ typedef NS_ENUM(NSInteger, AnimMode) {
 }
 
 - (void)render {
-    // ジャム中はGPUのドゥンドゥンを裏拍に置く＝交互に沈む掛け合い
+    // ジャム中はGPUのドゥンドゥン/最高潮を裏拍に置く＝交互に沈む掛け合い
     BOOL anti = _jamTimer != nil;
     _item.button.image = stageImage([self rowsFor:_cpuBot antiphase:NO],
                                     [self rowsFor:_gpuBot antiphase:anti]);
@@ -870,12 +966,12 @@ typedef NS_ENUM(NSInteger, AnimMode) {
 }
 
 // ---------------------------------------------------------------------------
-// ジャム: 二体とも踊っている（ループ中でレベル1〜3）ときは、速いほうのBPMに
+// ジャム: 二体とも踊っている（ループ中でレベル1〜4）ときは、速いほうのBPMに
 // 遅いほうが引っ張られ、同じ拍で動く。GPUのドゥンドゥンは裏拍。
 // ---------------------------------------------------------------------------
 
 - (BOOL)isDancing:(Bot *)b {
-    return b->mode == AnimModeLoop && b->level >= 1 && b->level <= 3;
+    return b->mode == AnimModeLoop && b->level >= 1 && b->level <= 4;
 }
 
 - (BOOL)jamming {
@@ -922,18 +1018,22 @@ typedef NS_ENUM(NSInteger, AnimMode) {
 // ---------------------------------------------------------------------------
 
 - (void)applyLoad:(Bot *)b {
+    int target = [self levelForLoad:b->load];
+    b->hotSecs = target == 4 ? b->hotSecs + kSampleInterval : 0;
     // シーケンス再生中（Vanish/Reappear）は割り込まず最後まで見せる
     if (b->mode == AnimModePlayVanish || b->mode == AnimModePlayReappear) return;
-    int newLevel = [self levelForLoad:b->load];
-    if (newLevel == b->level) return;
-    if (newLevel == 4) {
-        b->level = 4;
+    if (b->level == 5) {
+        if (target < 4) {        // 80%を割ったら復帰
+            b->level = target;   // シーケンス完了後にこのレベルのループへ入る
+            [self startOneShot:b mode:AnimModePlayReappear];
+        }
+        return;
+    }
+    if (target == 4 && b->hotSecs >= kHoldOutSecs) {
+        b->level = 5;            // 粘りきって退勤
         [self startOneShot:b mode:AnimModePlayVanish];
-    } else if (b->level == 4) {
-        b->level = newLevel; // シーケンス完了後にこのレベルのループへ入る
-        [self startOneShot:b mode:AnimModePlayReappear];
-    } else {
-        [self restartLoop:b level:newLevel];
+    } else if (target != b->level) {
+        [self restartLoop:b level:target];
     }
 }
 
@@ -964,7 +1064,7 @@ typedef NS_ENUM(NSInteger, AnimMode) {
                 busy += u + s + n;
                 total += u + s + n + idle;
             }
-            if (total > 0) _cpuBot->load = (double)busy / (double)total;
+            if (total > 0) feed(_cpuBot, (double)busy / (double)total);
             vm_deallocate(mach_task_self(), (vm_address_t)_prevCpuInfo,
                           _prevCpuInfoCnt * sizeof(integer_t));
         }
@@ -974,7 +1074,7 @@ typedef NS_ENUM(NSInteger, AnimMode) {
 
     // --- GPU（読めなければ0扱い＝静止） ---
     double gpu = readGpuUtilization();
-    _gpuBot->load = gpu < 0 ? 0 : gpu;
+    feed(_gpuBot, gpu < 0 ? 0 : gpu);
 
     // --- ネットワーク（en* の受信/送信バイトの差分） ---
     uint64_t inB = 0, outB = 0;
@@ -1001,6 +1101,12 @@ typedef NS_ENUM(NSInteger, AnimMode) {
     _prevNetIn = inB; _prevNetOut = outB; _prevNetAt = now;
 }
 
+- (NSString *)statusFor:(Bot *)b {
+    if (b->level == 4 && b->mode == AnimModeLoop)
+        return [NSString stringWithFormat:@"最高潮・粘り %.0f/%.0f秒", b->hotSecs, kHoldOutSecs];
+    return [self nameForLevel:b->level];
+}
+
 static NSString *rateString(double bps) {
     if (bps >= 1e6) return [NSString stringWithFormat:@"%.1f MB/s", bps / 1e6];
     if (bps >= 1e3) return [NSString stringWithFormat:@"%.0f KB/s", bps / 1e3];
@@ -1009,11 +1115,11 @@ static NSString *rateString(double bps) {
 
 - (void)updateMenuTitles {
     _miCpu.title = [NSString stringWithFormat:@"CPU: %.1f%%（%@）",
-                    _cpuBot->load * 100.0, [self nameForLevel:_cpuBot->level]];
+                    _cpuBot->load * 100.0, [self statusFor:_cpuBot]];
     _miGpu.title = [NSString stringWithFormat:@"GPU: %.1f%%（%@）",
-                    _gpuBot->load * 100.0, [self nameForLevel:_gpuBot->level]];
+                    _gpuBot->load * 100.0, [self statusFor:_gpuBot]];
     if (_jamTimer) _miJam.title = @"♪ ジャム中";
-    else if (_cpuBot->level == 4 && _gpuBot->level == 4) _miJam.title = @"二体とも退勤";
+    else if (_cpuBot->level == 5 && _gpuBot->level == 5) _miJam.title = @"二体とも退勤";
     else _miJam.title = @"ソロ";
 
     // アクティビティモニタの「使用済みメモリ」と同じ式:

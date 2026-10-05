@@ -50,17 +50,19 @@ def overlay(base, other):
 #   頭-首-胴-脚のみ。x範囲 2-11 (10幅) はエレベーター内寸とぴったり一致。
 # ---------------------------------------------------------------------------
 
-def robot(dx=0, lean=0, crouch=0, compact=False):
+def robot(dx=0, lean=0, crouch=0, compact=False, banzai=False, hop=False):
     """dx: 全体の横シフト（エレベーターへの移動用）
        lean: 上半身（頭・首・胴・腕）だけを足に対して左右にずらす（ゆらゆら用）
        crouch: 上半身を1px落として脚を1px縮める（EDMのドゥンドゥン用）
        compact: 腕とアンテナを省いた細身シルエット（エレベーターに入る用）
+       banzai: 腕を頭の横まで振り上げる（最高潮用）
+       hop: 足先を1px浮かせる＝跳ねた瞬間（最高潮用）
     """
     g = blank()
 
     # 脚（常に基準位置、crouch分だけ短縮）
     leg_top = 13 + crouch
-    leg_bot = 17
+    leg_bot = 16 if hop else 17
     if leg_top <= leg_bot:
         fill_rect(g, 4 + dx, 5 + dx, leg_top, leg_bot, True)
         fill_rect(g, 8 + dx, 9 + dx, leg_top, leg_bot, True)
@@ -81,7 +83,11 @@ def robot(dx=0, lean=0, crouch=0, compact=False):
     fill_rect(g, 6 + ux, 7 + ux, 6 + uy, 6 + uy, True)
     # 胴
     fill_rect(g, 2 + ux, 11 + ux, 7 + uy, 12 + uy, True)
-    if not compact:
+    if banzai:
+        # 振り上げた腕（肩から頭の横へ）
+        fill_rect(g, 0 + ux, 1 + ux, 1 + uy, 7 + uy, True)
+        fill_rect(g, 12 + ux, 13 + ux, 1 + uy, 7 + uy, True)
+    elif not compact:
         # 腕
         fill_rect(g, 0 + ux, 1 + ux, 7 + uy, 11 + uy, True)
         fill_rect(g, 12 + ux, 13 + ux, 7 + uy, 11 + uy, True)
@@ -142,6 +148,11 @@ SWAY = [robot(lean=0), robot(lean=1), robot(lean=0), robot(lean=-1)]   # 1: ゆ�
 
 BOUNCE = [robot(crouch=0), robot(crouch=1)]                    # 2/3: EDMドゥンドゥン（③は再生間隔だけ速める）
 
+# 4: 最高潮（80%超え、退勤まで粘っている間）— 万歳したまま、沈んで溜め→跳ねる、を左右交互に
+#    腕は上げっぱなし（跳ねるたびに上げ下げしない）
+CLIMAX = [robot(banzai=True, crouch=1), robot(banzai=True, hop=True),
+          robot(banzai=True, crouch=1), robot(banzai=True, hop=True, lean=1)]
+
 BLANK = [blank()]                                              # 4: 職務放棄・完全に消えた状態
 
 # --- 職務放棄シーケンス（0/1/2/3 → 4 へ入るときに1回だけ再生） ---
@@ -180,6 +191,7 @@ ALL_SEQS = {
     "idle": IDLE,
     "sway": SWAY,
     "bounce": BOUNCE,
+    "climax": CLIMAX,
     "blank": BLANK,
     "vanish": VANISH,
     "reappear": REAPPEAR,
@@ -251,6 +263,7 @@ if __name__ == "__main__":
         print(dump_c_array("kIdle", IDLE))
         print(dump_c_array("kSway", SWAY))
         print(dump_c_array("kBounce", BOUNCE))
+        print(dump_c_array("kClimax", CLIMAX))
         print(dump_c_array("kBlank", BLANK))
         print(dump_c_array("kVanish", VANISH))
         print(dump_c_array("kReappear", REAPPEAR))
