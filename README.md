@@ -55,3 +55,4 @@ open 走るウマ.app          # 起動
 | `main.m` | アプリ本体（ObjC 単一ファイル）。状態機械は `AnimMode`（Loop/PlayVanish/BlankHold/PlayReappear）で管理 |
 | `frames.py` | ドット絵デザインツール。ロボット本体・エレベーターの箱・おたまじゃくしをコードで組み立てて生成する。`python3 frames.py sheet out.png [idle\|sway\|bounce\|blank\|vanish\|reappear]` でプレビューPNG生成、`python3 frames.py dump` で main.m 用のC配列を出力（フレームを変えたら貼り直す） |
 | `build.sh` | ビルドスクリプト |
+| `stories/` | 試運転のついでに生まれた短編2本。ローカルの qwen3.6 で GPU を燃やして GPU ロボットを踊らせている間に書かせたもの（本文は無加工） |
