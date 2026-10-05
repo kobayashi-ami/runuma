@@ -19,6 +19,17 @@ def set_px(grid, x, y, on=True):
         grid[y][x] = "X" if on else "."
 
 
+def put(grid, x, y, ch):
+    if 0 <= x < W and 0 <= y < H:
+        grid[y][x] = ch
+
+
+def paint(grid, x0, x1, y0, y1, ch):
+    for y in range(y0, y1 + 1):
+        for x in range(x0, x1 + 1):
+            put(grid, x, y, ch)
+
+
 def fill_rect(grid, x0, x1, y0, y1, on=True):
     for y in range(y0, y1 + 1):
         for x in range(x0, x1 + 1):
@@ -26,12 +37,12 @@ def fill_rect(grid, x0, x1, y0, y1, on=True):
 
 
 def overlay(base, other):
-    """other の 'X' を base に重ねる（other の '.' は透過＝base をそのまま残す）"""
+    """other の色付き画素を base に重ねる（other の '.' は透過＝base をそのまま残す）"""
     g = [row[:] for row in base]
     for y in range(H):
         for x in range(W):
-            if other[y][x] == "X":
-                g[y][x] = "X"
+            if other[y][x] != ".":
+                g[y][x] = other[y][x]
     return g
 
 
@@ -96,6 +107,58 @@ def robot(dx=0, lean=0, crouch=0, compact=False, banzai=False, hop=False):
 
 
 # ---------------------------------------------------------------------------
+# GPUロボット（緑のペットボトルとジャンク銀でできた彫刻ロボット・カラー）
+#   色の文字: S=銀（フレーム/ジャバラ/頭の板） G=緑のボトル R=赤（目・胸の帯・手のひら）
+#   'X' は使わない（X=メニューバーの文字色。箱と CPU ロボットだけが使う）
+#   骨格は robot() と同じ座標・同じ引数なので、箱への出入りもそのまま通る
+# ---------------------------------------------------------------------------
+
+def gpu_robot(dx=0, lean=0, crouch=0, compact=False, banzai=False, hop=False):
+    g = blank()
+    ux, uy = dx + lean, crouch
+
+    # 脚: 下から 靴(銀) → すね(緑ボトル) → 太もも(銀ジャバラ)
+    leg_top, leg_bot = 13 + crouch, 16 if hop else 17
+    for lx in (4, 8):
+        x0, x1 = lx + dx, lx + 1 + dx
+        for y in range(leg_top, leg_bot + 1):
+            from_bot = leg_bot - y
+            put(g, x0, y, "S" if from_bot == 0 or from_bot >= 3 else "G")
+            put(g, x1, y, "S" if from_bot == 0 or from_bot >= 3 else "G")
+
+    # 頭の上のつまみ
+    if not compact:
+        paint(g, 6 + ux, 7 + ux, 0 + uy, 0 + uy, "S")
+    # 頭: 透明ボトルに銀の板を貼った四角い箱、赤い丸目、まんなかに鼻の板
+    paint(g, 3 + ux, 10 + ux, 1 + uy, 5 + uy, "S")
+    paint(g, 4 + ux, 5 + ux, 2 + uy, 3 + uy, "R")
+    paint(g, 8 + ux, 9 + ux, 2 + uy, 3 + uy, "R")
+    paint(g, 5 + ux, 5 + ux, 5 + uy, 5 + uy, ".")   # 口の隙間（鼻の板の左右）
+    paint(g, 8 + ux, 8 + ux, 5 + uy, 5 + uy, ".")
+    # 首（ジャバラ）
+    paint(g, 6 + ux, 7 + ux, 6 + uy, 6 + uy, "S")
+    # 胴: 緑のボトルを詰めた胴を、上下の銀パイプで挟む。胸に赤い帯が一本、下に銀の縞板
+    paint(g, 2 + ux, 11 + ux, 7 + uy, 12 + uy, "G")
+    paint(g, 2 + ux, 11 + ux, 7 + uy, 7 + uy, "S")      # 肩のパイプ
+    paint(g, 2 + ux, 11 + ux, 12 + uy, 12 + uy, "S")    # 腰のパイプ
+    paint(g, 3 + ux, 10 + ux, 9 + uy, 9 + uy, "R")      # 胸の赤い帯
+    paint(g, 4 + ux, 9 + ux, 11 + uy, 11 + uy, "S")     # 縞板
+
+    # 腕: 肩から 緑ボトル → 銀ジャバラの前腕 → 緑の手
+    if banzai:
+        for ax in (0, 12):
+            paint(g, ax + ux, ax + 1 + ux, 6 + uy, 7 + uy, "G")
+            paint(g, ax + ux, ax + 1 + ux, 3 + uy, 5 + uy, "S")
+            paint(g, ax + ux, ax + 1 + ux, 1 + uy, 2 + uy, "G")
+    elif not compact:
+        for ax in (0, 12):
+            paint(g, ax + ux, ax + 1 + ux, 7 + uy, 8 + uy, "G")
+            paint(g, ax + ux, ax + 1 + ux, 9 + uy, 10 + uy, "S")
+            paint(g, ax + ux, ax + 1 + ux, 11 + uy, 11 + uy, "G")
+    return g
+
+
+# ---------------------------------------------------------------------------
 # エレベーターの箱（右側 x=16-27, 12幅・フル高さ y=0-17）
 # ---------------------------------------------------------------------------
 BX0, BX1 = 16, 27
@@ -127,14 +190,16 @@ def box(mode="closed", grow=None, wipe_top=None):
 # 精子（エレベーター再登場演出）: 丸い頭 + くねる尻尾
 # ---------------------------------------------------------------------------
 
-def sperm(hx, hy, wiggle=0):
+def sperm(hx, hy, wiggle=0, ch="X"):
     g = blank()
-    fill_rect(g, hx, hx + 2, hy, hy + 1, True)  # 頭（3x2）
+    for x in range(hx, hx + 3):                 # 頭（3x2）
+        for y in (hy, hy + 1):
+            put(g, x, y, ch)
     # 尻尾（頭から右へ、wiggle で上下にくねる）
     tx = hx + 3
     for i in range(7):
         ty = hy + (1 if (i + wiggle) % 2 == 0 else 0)
-        set_px(g, tx + i, ty, True)
+        put(g, tx + i, ty, ch)
     return g
 
 
@@ -142,60 +207,61 @@ def sperm(hx, hy, wiggle=0):
 # 各状態のフレーム定義
 # ---------------------------------------------------------------------------
 
-IDLE = [robot()]                                              # 0: 微動だにしない
+def make_seqs(rb, sp="X"):
+    """rb: ロボットを描く関数（robot / gpu_robot）、sp: 精子の色"""
+    IDLE = [rb()]                                              # 0: 微動だにしない
 
-SWAY = [robot(lean=0), robot(lean=1), robot(lean=0), robot(lean=-1)]   # 1: ゆらゆら
+    SWAY = [rb(lean=0), rb(lean=1), rb(lean=0), rb(lean=-1)]   # 1: ゆらゆら
 
-BOUNCE = [robot(crouch=0), robot(crouch=1)]                    # 2/3: EDMドゥンドゥン（③は再生間隔だけ速める）
+    BOUNCE = [rb(crouch=0), rb(crouch=1)]                    # 2/3: EDMドゥンドゥン（③は再生間隔だけ速める）
 
-# 4: 最高潮（80%超え、退勤まで粘っている間）— 万歳したまま、沈んで溜め→跳ねる、を左右交互に
-#    腕は上げっぱなし（跳ねるたびに上げ下げしない）
-CLIMAX = [robot(banzai=True, crouch=1), robot(banzai=True, hop=True),
-          robot(banzai=True, crouch=1), robot(banzai=True, hop=True, lean=1)]
+    # 4: 最高潮（80%超え、退勤まで粘っている間）— 万歳したまま、沈んで溜め→跳ねる、を左右交互に
+    #    腕は上げっぱなし（跳ねるたびに上げ下げしない）
+    CLIMAX = [rb(banzai=True, crouch=1), rb(banzai=True, hop=True),
+              rb(banzai=True, crouch=1), rb(banzai=True, hop=True, lean=1)]
 
-BLANK = [blank()]                                              # 4: 職務放棄・完全に消えた状態
+    BLANK = [blank()]                                              # 4: 職務放棄・完全に消えた状態
 
-# --- 職務放棄シーケンス（0/1/2/3 → 4 へ入るときに1回だけ再生） ---
-_box_closed_full_with_robot = overlay(robot(), box("closed"))
-VANISH = [
-    robot(),                                                    # 通常姿勢
-    overlay(robot(), box("closed", grow=6)),                    # 箱が上からせり出してくる
-    overlay(robot(), box("closed", grow=12)),
-    _box_closed_full_with_robot,                                # 箱、着地・閉
-    overlay(robot(), box("open")),                              # 扉が開く
-    overlay(robot(dx=8, compact=True), box("open")),             # ロボットが箱へ歩み寄る
-    overlay(robot(dx=15, compact=True), box("open")),            # 箱の中に完全に入る
-    box("closed"),                                              # 扉が閉まる（ロボット見えなくなる）
-    box("closed", wipe_top=9),                                  # 箱が上へスライドして消えていく
-    blank(),                                                    # 元の場所は空白になって、無くなる
-]
+    # --- 職務放棄シーケンス（0/1/2/3 → 4 へ入るときに1回だけ再生） ---
+    _box_closed_full_with_robot = overlay(rb(), box("closed"))
+    VANISH = [
+        rb(),                                                    # 通常姿勢
+        overlay(rb(), box("closed", grow=6)),                    # 箱が上からせり出してくる
+        overlay(rb(), box("closed", grow=12)),
+        _box_closed_full_with_robot,                                # 箱、着地・閉
+        overlay(rb(), box("open")),                              # 扉が開く
+        overlay(rb(dx=8, compact=True), box("open")),             # ロボットが箱へ歩み寄る
+        overlay(rb(dx=15, compact=True), box("open")),            # 箱の中に完全に入る
+        box("closed"),                                              # 扉が閉まる（ロボット見えなくなる）
+        box("closed", wipe_top=9),                                  # 箱が上へスライドして消えていく
+        blank(),                                                    # 元の場所は空白になって、無くなる
+    ]
 
-# --- 復帰シーケンス（4 → 0/1/2/3 へ戻るときに1回だけ再生・エレベーター×精子） ---
-_box_closed_full_empty = box("closed")
-REAPPEAR = [
-    blank(),
-    box("closed", grow=6),                                      # 箱が降ってくる
-    box("closed", grow=12),
-    _box_closed_full_empty,                                     # 着地・閉（中身はまだ見えない）
-    overlay(sperm(19, 8, wiggle=0), box("open")),                # 扉が開く…中には精子
-    overlay(sperm(12, 8, wiggle=1), box("open")),                # 泳いで出てくる（くねり1）
-    overlay(sperm(5, 8, wiggle=0), box("open")),                 # くねり2、ロボットの定位置まで到達
-    overlay(robot(), box("open")),                               # 変態完了＝ロボットの姿に
-    _box_closed_full_with_robot,                                 # 扉が閉まる（ロボットは外＝定位置）
-    overlay(robot(), box("closed", wipe_top=9)),                 # 箱が上へスライドして去っていく
-    robot(),                                                     # 箱は消え、ロボットだけが残る
-]
+    # --- 復帰シーケンス（4 → 0/1/2/3 へ戻るときに1回だけ再生・エレベーター×精子） ---
+    _box_closed_full_empty = box("closed")
+    REAPPEAR = [
+        blank(),
+        box("closed", grow=6),                                      # 箱が降ってくる
+        box("closed", grow=12),
+        _box_closed_full_empty,                                     # 着地・閉（中身はまだ見えない）
+        overlay(sperm(19, 8, wiggle=0, ch=sp), box("open")),                # 扉が開く…中には精子
+        overlay(sperm(12, 8, wiggle=1, ch=sp), box("open")),                # 泳いで出てくる（くねり1）
+        overlay(sperm(5, 8, wiggle=0, ch=sp), box("open")),                 # くねり2、ロボットの定位置まで到達
+        overlay(rb(), box("open")),                               # 変態完了＝ロボットの姿に
+        _box_closed_full_with_robot,                                 # 扉が閉まる（ロボットは外＝定位置）
+        overlay(rb(), box("closed", wipe_top=9)),                 # 箱が上へスライドして去っていく
+        rb(),                                                     # 箱は消え、ロボットだけが残る
+    ]
+    return {
+        "idle": IDLE, "sway": SWAY, "bounce": BOUNCE, "climax": CLIMAX,
+        "blank": BLANK, "vanish": VANISH, "reappear": REAPPEAR,
+    }
 
 
-ALL_SEQS = {
-    "idle": IDLE,
-    "sway": SWAY,
-    "bounce": BOUNCE,
-    "climax": CLIMAX,
-    "blank": BLANK,
-    "vanish": VANISH,
-    "reappear": REAPPEAR,
-}
+CPU_SEQS = make_seqs(robot)
+GPU_SEQS = make_seqs(gpu_robot, sp="G")   # 緑の精子が緑のロボットに変態する
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -216,20 +282,28 @@ def write_png(path, pixels, w, h):
     open(path, "wb").write(png)
 
 
-def render_sheet(path, frames, scale=10, gap=2, cols=None):
+# プレビューの色（main.m の描画色と揃える）
+PALETTE = {
+    True:  {"X": (235, 235, 240), "S": (196, 202, 210), "G": (46, 204, 92), "R": (255, 48, 48), "bg": (28, 30, 40)},
+    False: {"X": (20, 20, 25), "S": (128, 134, 142), "G": (24, 160, 64), "R": (225, 30, 30), "bg": (236, 236, 240)},
+}
+
+
+def render_sheet(path, frames, scale=10, gap=2, cols=None, dark=True):
+    pal = PALETTE[dark]
     n = len(frames)
     cols = cols or n
     rows_n = (n + cols - 1) // cols
     sw = cols * (W + gap) * scale
     sh = rows_n * (H + 2) * scale
-    px = [[(240, 240, 245) for _ in range(sw)] for _ in range(sh)]
+    px = [[(120, 120, 130) for _ in range(sw)] for _ in range(sh)]
     for i, fr in enumerate(frames):
         rr, cc = divmod(i, cols)
         ox = cc * (W + gap) * scale
         oy = rr * (H + 2) * scale
         for r in range(H):
             for c in range(W):
-                col = (20, 20, 25) if fr[r][c] == "X" else (255, 255, 255)
+                col = pal.get(fr[r][c], pal["bg"])
                 for dy in range(scale):
                     for dx in range(scale):
                         px[oy + (r + 1) * scale + dy][ox + c * scale + dx] = col
@@ -254,16 +328,19 @@ def dump_c_array(name, frames):
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "sheet"
     if cmd == "sheet":
+        # python3 frames.py sheet out.png [seq] [cpu|gpu] [light]
         out = sys.argv[2] if len(sys.argv) > 2 else "sheet.png"
-        seq = sys.argv[3] if len(sys.argv) > 3 else None
-        frames = ALL_SEQS[seq] if seq else (IDLE + SWAY + BOUNCE + VANISH + REAPPEAR)
-        render_sheet(out, frames, cols=6)
+        seq = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] != "all" else None
+        seqs = GPU_SEQS if len(sys.argv) > 4 and sys.argv[4] == "gpu" else CPU_SEQS
+        dark = not (len(sys.argv) > 5 and sys.argv[5] == "light")
+        frames = seqs[seq] if seq else [f for k in ("idle", "sway", "bounce", "climax", "vanish", "reappear") for f in seqs[k]]
+        render_sheet(out, frames, cols=6, dark=dark)
         print(f"done: {out} ({len(frames)} frames)")
     elif cmd == "dump":
-        print(dump_c_array("kIdle", IDLE))
-        print(dump_c_array("kSway", SWAY))
-        print(dump_c_array("kBounce", BOUNCE))
-        print(dump_c_array("kClimax", CLIMAX))
-        print(dump_c_array("kBlank", BLANK))
-        print(dump_c_array("kVanish", VANISH))
-        print(dump_c_array("kReappear", REAPPEAR))
+        for prefix, seqs in (("k", CPU_SEQS), ("kGpu", GPU_SEQS)):
+            for key, name in (("idle", "Idle"), ("sway", "Sway"), ("bounce", "Bounce"),
+                              ("climax", "Climax"), ("blank", "Blank"),
+                              ("vanish", "Vanish"), ("reappear", "Reappear")):
+                if prefix == "kGpu" and key == "blank":
+                    continue  # 空白は共通
+                print(dump_c_array(prefix + name, seqs[key]))
