@@ -1,0 +1,1073 @@
+// 走るウマ改め「働くロボット」— 左のCPUロボットと右のGPUロボットが、それぞれの負荷で0〜4のテンションで踊る
+// 二体とも踊っているときはジャム: 速いほうのBPMに揃い、GPUは裏拍で沈む
+// 0: 微動だにしない / 1: ゆらゆら / 2: EDMドゥンドゥン / 3: ①のBPMアップ / 4: 職務放棄（エレベーターで退勤）
+// メニューで CPU / メモリ / ストレージ / ネットワーク速度を確認できる
+#import <Cocoa/Cocoa.h>
+#import <mach/mach.h>
+#import <sys/sysctl.h>
+#import <ifaddrs.h>
+#import <net/if.h>
+#import <IOKit/IOKitLib.h>
+
+static const int kFrameW = 28, kFrameH = 18;
+
+// レベル0: 完全静止（1フレーム）
+static const char *kIdle[1][18] = {
+    {
+        ".......X....................",
+        ".......X....................",
+        "....XXXXXX..................",
+        "....X.XX.X..................",
+        "....XXXXXX..................",
+        "....XXXXXX..................",
+        "......XX....................",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "..XXXXXXXXXX................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+    },
+};
+
+// レベル1: ゆらゆら横揺れ（4フレーム）
+static const char *kSway[4][18] = {
+    {
+        ".......X....................",
+        ".......X....................",
+        "....XXXXXX..................",
+        "....X.XX.X..................",
+        "....XXXXXX..................",
+        "....XXXXXX..................",
+        "......XX....................",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "..XXXXXXXXXX................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+    },
+    {
+        "........X...................",
+        "........X...................",
+        ".....XXXXXX.................",
+        ".....X.XX.X.................",
+        ".....XXXXXX.................",
+        ".....XXXXXX.................",
+        ".......XX...................",
+        ".XXXXXXXXXXXXXX.............",
+        ".XXXXXXXXXXXXXX.............",
+        ".XXXXXXXXXXXXXX.............",
+        ".XXXXXXXXXXXXXX.............",
+        ".XXXXXXXXXXXXXX.............",
+        "...XXXXXXXXXX...............",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+    },
+    {
+        ".......X....................",
+        ".......X....................",
+        "....XXXXXX..................",
+        "....X.XX.X..................",
+        "....XXXXXX..................",
+        "....XXXXXX..................",
+        "......XX....................",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "..XXXXXXXXXX................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+    },
+    {
+        "......X.....................",
+        "......X.....................",
+        "...XXXXXX...................",
+        "...X.XX.X...................",
+        "...XXXXXX...................",
+        "...XXXXXX...................",
+        ".....XX.....................",
+        "XXXXXXXXXXXXX...............",
+        "XXXXXXXXXXXXX...............",
+        "XXXXXXXXXXXXX...............",
+        "XXXXXXXXXXXXX...............",
+        "XXXXXXXXXXXXX...............",
+        ".XXXXXXXXXX.................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+    },
+};
+
+// レベル2/3: EDMドゥンドゥん（2フレーム、③は再生間隔だけ速める）
+static const char *kBounce[2][18] = {
+    {
+        ".......X....................",
+        ".......X....................",
+        "....XXXXXX..................",
+        "....X.XX.X..................",
+        "....XXXXXX..................",
+        "....XXXXXX..................",
+        "......XX....................",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "..XXXXXXXXXX................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+    },
+    {
+        "............................",
+        ".......X....................",
+        ".......X....................",
+        "....XXXXXX..................",
+        "....X.XX.X..................",
+        "....XXXXXX..................",
+        "....XXXXXX..................",
+        "......XX....................",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "..XXXXXXXXXX................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+    },
+};
+
+// レベル4に入ったあとの定常状態：完全に空白（職務放棄でメニューバーから消える）
+static const char *kBlank[1][18] = {
+    {
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+    },
+};
+
+// 職務放棄シーケンス（0〜3 → 4 に入るときに1回だけ再生）
+// 箱が上から降ってくる → 着地・扉が開く → ロボットが箱に入る → 扉が閉まる → 箱が上へ去る → 空白
+static const char *kVanish[10][18] = {
+    {
+        ".......X....................",
+        ".......X....................",
+        "....XXXXXX..................",
+        "....X.XX.X..................",
+        "....XXXXXX..................",
+        "....XXXXXX..................",
+        "......XX....................",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "..XXXXXXXXXX................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+    },
+    {
+        ".......X........XXXXXXXXXXXX",
+        ".......X........XXXXXXXXXXXX",
+        "....XXXXXX......XXXXXXXXXXXX",
+        "....X.XX.X......XXXXXXXXXXXX",
+        "....XXXXXX......XXXXXXXXXXXX",
+        "....XXXXXX......XXXXXXXXXXXX",
+        "......XX....................",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "..XXXXXXXXXX................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+    },
+    {
+        ".......X........XXXXXXXXXXXX",
+        ".......X........XXXXXXXXXXXX",
+        "....XXXXXX......XXXXXXXXXXXX",
+        "....X.XX.X......XXXXXXXXXXXX",
+        "....XXXXXX......XXXXXXXXXXXX",
+        "....XXXXXX......XXXXXXXXXXXX",
+        "......XX........XXXXXXXXXXXX",
+        "XXXXXXXXXXXXXX..XXXXXXXXXXXX",
+        "XXXXXXXXXXXXXX..XXXXXXXXXXXX",
+        "XXXXXXXXXXXXXX..XXXXXXXXXXXX",
+        "XXXXXXXXXXXXXX..XXXXXXXXXXXX",
+        "XXXXXXXXXXXXXX..XXXXXXXXXXXX",
+        "..XXXXXXXXXX................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+    },
+    {
+        ".......X........XXXXXXXXXXXX",
+        ".......X........XXXXXXXXXXXX",
+        "....XXXXXX......XXXXXXXXXXXX",
+        "....X.XX.X......XXXXXXXXXXXX",
+        "....XXXXXX......XXXXXXXXXXXX",
+        "....XXXXXX......XXXXXXXXXXXX",
+        "......XX........XXXXXXXXXXXX",
+        "XXXXXXXXXXXXXX..XXXXXXXXXXXX",
+        "XXXXXXXXXXXXXX..XXXXXXXXXXXX",
+        "XXXXXXXXXXXXXX..XXXXXXXXXXXX",
+        "XXXXXXXXXXXXXX..XXXXXXXXXXXX",
+        "XXXXXXXXXXXXXX..XXXXXXXXXXXX",
+        "..XXXXXXXXXX....XXXXXXXXXXXX",
+        "....XX..XX......XXXXXXXXXXXX",
+        "....XX..XX......XXXXXXXXXXXX",
+        "....XX..XX......XXXXXXXXXXXX",
+        "....XX..XX......XXXXXXXXXXXX",
+        "....XX..XX......XXXXXXXXXXXX",
+    },
+    {
+        ".......X........XXXXXXXXXXXX",
+        ".......X........X..........X",
+        "....XXXXXX......X..........X",
+        "....X.XX.X......X..........X",
+        "....XXXXXX......X..........X",
+        "....XXXXXX......X..........X",
+        "......XX........X..........X",
+        "XXXXXXXXXXXXXX..X..........X",
+        "XXXXXXXXXXXXXX..X..........X",
+        "XXXXXXXXXXXXXX..X..........X",
+        "XXXXXXXXXXXXXX..X..........X",
+        "XXXXXXXXXXXXXX..X..........X",
+        "..XXXXXXXXXX....X..........X",
+        "....XX..XX......X..........X",
+        "....XX..XX......X..........X",
+        "....XX..XX......X..........X",
+        "....XX..XX......X..........X",
+        "....XX..XX......XXXXXXXXXXXX",
+    },
+    {
+        "................XXXXXXXXXXXX",
+        "................X..........X",
+        "............XXXXXX.........X",
+        "............X.XXXX.........X",
+        "............XXXXXX.........X",
+        "............XXXXXX.........X",
+        "..............XXX..........X",
+        "..........XXXXXXXXXX.......X",
+        "..........XXXXXXXXXX.......X",
+        "..........XXXXXXXXXX.......X",
+        "..........XXXXXXXXXX.......X",
+        "..........XXXXXXXXXX.......X",
+        "..........XXXXXXXXXX.......X",
+        "............XX..XX.........X",
+        "............XX..XX.........X",
+        "............XX..XX.........X",
+        "............XX..XX.........X",
+        "............XX..XXXXXXXXXXXX",
+    },
+    {
+        "................XXXXXXXXXXXX",
+        "................X..........X",
+        "................X..XXXXXX..X",
+        "................X..X.XX.X..X",
+        "................X..XXXXXX..X",
+        "................X..XXXXXX..X",
+        "................X....XX....X",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................X..XX..XX..X",
+        "................X..XX..XX..X",
+        "................X..XX..XX..X",
+        "................X..XX..XX..X",
+        "................XXXXXXXXXXXX",
+    },
+    {
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+    },
+    {
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+    },
+    {
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+    },
+};
+
+// 復帰シーケンス（4 → 0〜3 に戻るときに1回だけ再生・エレベーター×精子）
+// 箱が降ってくる → 着地・扉が開く → 中の精子が泳いで出てくる → ロボットの姿に変態 → 扉が閉まり箱が去る
+static const char *kReappear[11][18] = {
+    {
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+    },
+    {
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+    },
+    {
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+    },
+    {
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+        "................XXXXXXXXXXXX",
+    },
+    {
+        "................XXXXXXXXXXXX",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..XXX.X.X.X",
+        "................X..XXXX.X.XX",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................XXXXXXXXXXXX",
+    },
+    {
+        "................XXXXXXXXXXXX",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "............XXXXXX.X.X.....X",
+        "............XXX.X.X.X......X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................XXXXXXXXXXXX",
+    },
+    {
+        "................XXXXXXXXXXXX",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        ".....XXX.X.X.X..X..........X",
+        ".....XXXX.X.X.X.X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................X..........X",
+        "................XXXXXXXXXXXX",
+    },
+    {
+        ".......X........XXXXXXXXXXXX",
+        ".......X........X..........X",
+        "....XXXXXX......X..........X",
+        "....X.XX.X......X..........X",
+        "....XXXXXX......X..........X",
+        "....XXXXXX......X..........X",
+        "......XX........X..........X",
+        "XXXXXXXXXXXXXX..X..........X",
+        "XXXXXXXXXXXXXX..X..........X",
+        "XXXXXXXXXXXXXX..X..........X",
+        "XXXXXXXXXXXXXX..X..........X",
+        "XXXXXXXXXXXXXX..X..........X",
+        "..XXXXXXXXXX....X..........X",
+        "....XX..XX......X..........X",
+        "....XX..XX......X..........X",
+        "....XX..XX......X..........X",
+        "....XX..XX......X..........X",
+        "....XX..XX......XXXXXXXXXXXX",
+    },
+    {
+        ".......X........XXXXXXXXXXXX",
+        ".......X........XXXXXXXXXXXX",
+        "....XXXXXX......XXXXXXXXXXXX",
+        "....X.XX.X......XXXXXXXXXXXX",
+        "....XXXXXX......XXXXXXXXXXXX",
+        "....XXXXXX......XXXXXXXXXXXX",
+        "......XX........XXXXXXXXXXXX",
+        "XXXXXXXXXXXXXX..XXXXXXXXXXXX",
+        "XXXXXXXXXXXXXX..XXXXXXXXXXXX",
+        "XXXXXXXXXXXXXX..XXXXXXXXXXXX",
+        "XXXXXXXXXXXXXX..XXXXXXXXXXXX",
+        "XXXXXXXXXXXXXX..XXXXXXXXXXXX",
+        "..XXXXXXXXXX....XXXXXXXXXXXX",
+        "....XX..XX......XXXXXXXXXXXX",
+        "....XX..XX......XXXXXXXXXXXX",
+        "....XX..XX......XXXXXXXXXXXX",
+        "....XX..XX......XXXXXXXXXXXX",
+        "....XX..XX......XXXXXXXXXXXX",
+    },
+    {
+        ".......X....................",
+        ".......X....................",
+        "....XXXXXX..................",
+        "....X.XX.X..................",
+        "....XXXXXX..................",
+        "....XXXXXX..................",
+        "......XX....................",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..XXXXXXXXXXXX",
+        "XXXXXXXXXXXXXX..XXXXXXXXXXXX",
+        "XXXXXXXXXXXXXX..XXXXXXXXXXXX",
+        "..XXXXXXXXXX....XXXXXXXXXXXX",
+        "....XX..XX......XXXXXXXXXXXX",
+        "....XX..XX......XXXXXXXXXXXX",
+        "....XX..XX......XXXXXXXXXXXX",
+        "....XX..XX......XXXXXXXXXXXX",
+        "....XX..XX......XXXXXXXXXXXX",
+    },
+    {
+        ".......X....................",
+        ".......X....................",
+        "....XXXXXX..................",
+        "....X.XX.X..................",
+        "....XXXXXX..................",
+        "....XXXXXX..................",
+        "......XX....................",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "XXXXXXXXXXXXXX..............",
+        "..XXXXXXXXXX................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+        "....XX..XX..................",
+    },
+};
+
+static const double kOneShotInterval = 0.09; // 職務放棄/復帰シーケンスの1コマの長さ
+
+// 舞台: 左にCPUロボット、まんなかに共有のエレベーター、右に鏡写しのGPUロボット
+//   CPUの層はフレームをそのまま x=0.. に置く。GPUの層は左右反転して x = kStageW-1-c に置く。
+//   フレームの箱は x=16-27 なので、反転しても同じ場所に重なり、二体が同じ箱を使う。
+static const int kStageW = 44;
+
+typedef const char *const *Rows; // 1フレーム分（kFrameH 行）
+
+static NSImage *stageImage(Rows cpu, Rows gpu) {
+    NSImage *img = [NSImage imageWithSize:NSMakeSize(kStageW, kFrameH)
+                                  flipped:YES
+                           drawingHandler:^BOOL(NSRect rect) {
+        [[NSColor blackColor] setFill];
+        for (int r = 0; r < kFrameH; r++)
+            for (int c = 0; c < kFrameW; c++) {
+                if (cpu[r][c] == 'X') NSRectFill(NSMakeRect(c, r, 1, 1));
+                if (gpu[r][c] == 'X') NSRectFill(NSMakeRect(kStageW - 1 - c, r, 1, 1));
+            }
+        return YES;
+    }];
+    [img setTemplate:YES]; // ライト/ダークどちらのメニューバーにも自動で馴染む
+    return img;
+}
+
+// GPU使用率: IOAccelerator の PerformanceStatistics → "Device Utilization %"（sudo不要）
+static double readGpuUtilization(void) {
+    io_iterator_t it;
+    if (IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOAccelerator"),
+                                     &it) != KERN_SUCCESS)
+        return -1;
+    double best = -1;
+    io_object_t svc;
+    while ((svc = IOIteratorNext(it))) {
+        CFTypeRef stats = IORegistryEntryCreateCFProperty(svc, CFSTR("PerformanceStatistics"),
+                                                          kCFAllocatorDefault, 0);
+        if (stats) {
+            NSDictionary *d = CFBridgingRelease(stats);
+            if ([d isKindOfClass:[NSDictionary class]]) {
+                NSNumber *u = d[@"Device Utilization %"];
+                if ([u isKindOfClass:[NSNumber class]] && u.doubleValue > best)
+                    best = u.doubleValue;
+            }
+        }
+        IOObjectRelease(svc);
+    }
+    IOObjectRelease(it);
+    return best < 0 ? -1 : best / 100.0;
+}
+
+typedef NS_ENUM(NSInteger, AnimMode) {
+    AnimModeLoop,        // レベルに応じたループ再生中
+    AnimModePlayVanish,  // 職務放棄シーケンス再生中（1回きり）
+    AnimModeBlankHold,   // 職務放棄が完了し空白のまま停止
+    AnimModePlayReappear // 復帰シーケンス再生中（1回きり）
+};
+
+// 一体ぶんの状態機械。CPU用とGPU用の二つを持つ
+@interface Bot : NSObject {
+@public
+    AnimMode mode;
+    int level;   // 0..4（4=職務放棄）
+    int frame;
+    double load; // 0..1
+    NSTimer *timer;
+}
+@end
+@implementation Bot
+@end
+
+@interface UmaApp : NSObject <NSApplicationDelegate, NSMenuDelegate>
+@end
+
+@implementation UmaApp {
+    NSStatusItem *_item;
+    Bot *_cpuBot, *_gpuBot;
+    NSTimer *_jamTimer;  // ジャム中は二体ともこの一本の拍で動く
+    double _jamInterval;
+    BOOL _menuOpen;
+    processor_info_array_t _prevCpuInfo;
+    mach_msg_type_number_t _prevCpuInfoCnt;
+    uint64_t _prevNetIn, _prevNetOut;
+    NSDate *_prevNetAt;
+    double _downRate, _upRate;
+    NSMenuItem *_miCpu, *_miGpu, *_miJam, *_miMem, *_miDisk, *_miNet;
+}
+
+- (void)applicationDidFinishLaunching:(NSNotification *)note {
+    _cpuBot = [Bot new];
+    _gpuBot = [Bot new];
+
+    _item = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
+
+    NSMenu *menu = [[NSMenu alloc] init];
+    menu.delegate = self;
+    _miCpu  = [menu addItemWithTitle:@"CPU: --" action:NULL keyEquivalent:@""];
+    _miGpu  = [menu addItemWithTitle:@"GPU: --" action:NULL keyEquivalent:@""];
+    _miJam  = [menu addItemWithTitle:@"" action:NULL keyEquivalent:@""];
+    [menu addItem:[NSMenuItem separatorItem]];
+    _miMem  = [menu addItemWithTitle:@"メモリ: --" action:NULL keyEquivalent:@""];
+    _miDisk = [menu addItemWithTitle:@"空き容量: --" action:NULL keyEquivalent:@""];
+    _miNet  = [menu addItemWithTitle:@"↓ -- ↑ --" action:NULL keyEquivalent:@""];
+    [menu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *actMon = [menu addItemWithTitle:@"アクティビティモニタを開く"
+                                         action:@selector(openActivityMonitor:)
+                                  keyEquivalent:@""];
+    actMon.target = self;
+    [menu addItemWithTitle:@"終了" action:@selector(terminate:) keyEquivalent:@"q"];
+    _item.menu = menu;
+
+    [self sampleStats]; // 初回（差分の基準を作る）
+
+    // 起動時はいきなりシーケンスを再生せず、現在の負荷に応じた状態へ直接入る
+    for (Bot *b in @[_cpuBot, _gpuBot]) {
+        int initial = [self levelForLoad:b->load];
+        b->level = initial;
+        if (initial == 4) b->mode = AnimModeBlankHold;
+        else [self restartLoop:b level:initial];
+    }
+    [self updateJam];
+    [self render];
+
+    // 2秒ごとに CPU / GPU / ネットワークをサンプリング
+    NSTimer *sample = [NSTimer timerWithTimeInterval:2.0 target:self
+                                            selector:@selector(sampleTick:)
+                                            userInfo:nil repeats:YES];
+    [[NSRunLoop mainRunLoop] addTimer:sample forMode:NSRunLoopCommonModes];
+}
+
+// 使用率を5段階に区切ってテンションレベルを決める（CPUもGPUも同じ境界）
+//   〜8%: 0(静止) / 〜30%: 1(ゆらゆら) / 〜55%: 2(ドゥンドゥン) / 〜80%: 3(BPMアップ) / それ以上: 4(職務放棄)
+- (int)levelForLoad:(double)load {
+    if (load < 0.08) return 0;
+    if (load < 0.30) return 1;
+    if (load < 0.55) return 2;
+    if (load < 0.80) return 3;
+    return 4;
+}
+
+- (double)loopIntervalForLevel:(int)level {
+    switch (level) {
+        case 1: return 0.35;  // ゆらゆら
+        case 2: return 0.22;  // ドゥンドゥン
+        case 3: return 0.11;  // ドゥンドゥン（BPMアップ）
+        default: return 1.0;  // レベル0は1フレームなので実質無関係
+    }
+}
+
+- (int)loopFrameCountForLevel:(int)level {
+    switch (level) {
+        case 1: return 4;
+        case 2: case 3: return 2;
+        default: return 1;
+    }
+}
+
+- (NSString *)nameForLevel:(int)level {
+    switch (level) {
+        case 0: return @"静止";
+        case 1: return @"ゆらゆら";
+        case 2: return @"ノリノリ";
+        case 3: return @"本気ノリノリ";
+        default: return @"職務放棄";
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 描画: 二体の今のコマを一枚の舞台に重ねる
+// ---------------------------------------------------------------------------
+
+- (Rows)rowsFor:(Bot *)b antiphase:(BOOL)anti {
+    switch (b->mode) {
+        case AnimModeLoop:
+            switch (b->level) {
+                case 0: return kIdle[0];
+                case 1: return kSway[b->frame];
+                default: return kBounce[anti ? 1 - b->frame : b->frame];
+            }
+        case AnimModePlayVanish:   return kVanish[b->frame];
+        case AnimModeBlankHold:    return kBlank[0];
+        case AnimModePlayReappear: return kReappear[b->frame];
+    }
+    return kBlank[0];
+}
+
+- (void)render {
+    // ジャム中はGPUのドゥンドゥンを裏拍に置く＝交互に沈む掛け合い
+    BOOL anti = _jamTimer != nil;
+    _item.button.image = stageImage([self rowsFor:_cpuBot antiphase:NO],
+                                    [self rowsFor:_gpuBot antiphase:anti]);
+}
+
+// ---------------------------------------------------------------------------
+// 一体ぶんの状態遷移（タイマーは各自、ジャム中だけ一本にまとめる）
+// ---------------------------------------------------------------------------
+
+- (void)scheduleTimer:(Bot *)b interval:(double)interval {
+    [b->timer invalidate];
+    b->timer = [NSTimer timerWithTimeInterval:interval target:self
+                                     selector:@selector(botTick:)
+                                     userInfo:b repeats:YES];
+    [[NSRunLoop mainRunLoop] addTimer:b->timer forMode:NSRunLoopCommonModes];
+}
+
+- (void)stopTimer:(Bot *)b {
+    [b->timer invalidate];
+    b->timer = nil;
+}
+
+- (void)restartLoop:(Bot *)b level:(int)level {
+    b->mode = AnimModeLoop;
+    b->level = level;
+    b->frame = 0;
+    if (level == 0) [self stopTimer:b]; // 静止中は無駄にタイマーを回さない
+    else [self scheduleTimer:b interval:[self loopIntervalForLevel:level]];
+}
+
+- (void)startOneShot:(Bot *)b mode:(AnimMode)mode {
+    b->mode = mode;
+    b->frame = 0;
+    [self scheduleTimer:b interval:kOneShotInterval];
+}
+
+// 1コマ進める。描画は呼び出し側でまとめて行う
+- (void)advance:(Bot *)b {
+    switch (b->mode) {
+        case AnimModeLoop:
+            b->frame = (b->frame + 1) % [self loopFrameCountForLevel:b->level];
+            break;
+        case AnimModePlayVanish:
+            if (++b->frame >= 10) {
+                b->mode = AnimModeBlankHold;
+                [self stopTimer:b]; // 空白の間は無駄にタイマーを回さない
+                [self updateJam];
+            }
+            break;
+        case AnimModeBlankHold:
+            break;
+        case AnimModePlayReappear:
+            if (++b->frame >= 11) {
+                [self restartLoop:b level:b->level]; // 再生し終えたら今のレベルのループへ
+                [self updateJam];
+            }
+            break;
+    }
+}
+
+- (void)botTick:(NSTimer *)t {
+    [self advance:t.userInfo];
+    [self render];
+}
+
+// ---------------------------------------------------------------------------
+// ジャム: 二体とも踊っている（ループ中でレベル1〜3）ときは、速いほうのBPMに
+// 遅いほうが引っ張られ、同じ拍で動く。GPUのドゥンドゥンは裏拍。
+// ---------------------------------------------------------------------------
+
+- (BOOL)isDancing:(Bot *)b {
+    return b->mode == AnimModeLoop && b->level >= 1 && b->level <= 3;
+}
+
+- (BOOL)jamming {
+    return [self isDancing:_cpuBot] && [self isDancing:_gpuBot];
+}
+
+- (void)updateJam {
+    if ([self jamming]) {
+        double iv = MIN([self loopIntervalForLevel:_cpuBot->level],
+                        [self loopIntervalForLevel:_gpuBot->level]);
+        if (_jamTimer && iv == _jamInterval) {
+            // テンポはそのまま。レベルが変わって自分のタイマーで走り出した側を拍へ戻す
+            [self stopTimer:_cpuBot];
+            [self stopTimer:_gpuBot];
+            _gpuBot->frame = _cpuBot->frame % [self loopFrameCountForLevel:_gpuBot->level];
+            return;
+        }
+        [self stopTimer:_cpuBot];
+        [self stopTimer:_gpuBot];
+        [_jamTimer invalidate];
+        _jamInterval = iv;
+        _cpuBot->frame = _gpuBot->frame = 0; // 拍頭をそろえる
+        _jamTimer = [NSTimer timerWithTimeInterval:iv target:self
+                                          selector:@selector(jamTick:)
+                                          userInfo:nil repeats:YES];
+        [[NSRunLoop mainRunLoop] addTimer:_jamTimer forMode:NSRunLoopCommonModes];
+    } else if (_jamTimer) {
+        [_jamTimer invalidate];
+        _jamTimer = nil;
+        // セッション解散: 踊り続ける側は自分のBPMに戻る
+        for (Bot *b in @[_cpuBot, _gpuBot])
+            if (b->mode == AnimModeLoop) [self restartLoop:b level:b->level];
+    }
+}
+
+- (void)jamTick:(NSTimer *)t {
+    [self advance:_cpuBot];
+    [self advance:_gpuBot];
+    [self render];
+}
+
+// ---------------------------------------------------------------------------
+// サンプリング → レベル変化を各ロボットへ
+// ---------------------------------------------------------------------------
+
+- (void)applyLoad:(Bot *)b {
+    // シーケンス再生中（Vanish/Reappear）は割り込まず最後まで見せる
+    if (b->mode == AnimModePlayVanish || b->mode == AnimModePlayReappear) return;
+    int newLevel = [self levelForLoad:b->load];
+    if (newLevel == b->level) return;
+    if (newLevel == 4) {
+        b->level = 4;
+        [self startOneShot:b mode:AnimModePlayVanish];
+    } else if (b->level == 4) {
+        b->level = newLevel; // シーケンス完了後にこのレベルのループへ入る
+        [self startOneShot:b mode:AnimModePlayReappear];
+    } else {
+        [self restartLoop:b level:newLevel];
+    }
+}
+
+- (void)sampleTick:(NSTimer *)t {
+    [self sampleStats];
+    [self applyLoad:_cpuBot];
+    [self applyLoad:_gpuBot];
+    [self updateJam]; // ジャムの成立/解散/テンポ変更
+    [self render];
+    if (_menuOpen) [self updateMenuTitles];
+}
+- (void)sampleStats {
+    // --- CPU ---
+    natural_t cpuCount;
+    processor_info_array_t info;
+    mach_msg_type_number_t infoCnt;
+    if (host_processor_info(mach_host_self(), PROCESSOR_CPU_LOAD_INFO,
+                            &cpuCount, &info, &infoCnt) == KERN_SUCCESS) {
+        if (_prevCpuInfo) {
+            uint64_t busy = 0, total = 0;
+            for (natural_t i = 0; i < cpuCount; i++) {
+                integer_t *cur  = &info[i * CPU_STATE_MAX];
+                integer_t *prev = &_prevCpuInfo[i * CPU_STATE_MAX];
+                uint64_t u = cur[CPU_STATE_USER]   - prev[CPU_STATE_USER];
+                uint64_t s = cur[CPU_STATE_SYSTEM] - prev[CPU_STATE_SYSTEM];
+                uint64_t n = cur[CPU_STATE_NICE]   - prev[CPU_STATE_NICE];
+                uint64_t idle = cur[CPU_STATE_IDLE] - prev[CPU_STATE_IDLE];
+                busy += u + s + n;
+                total += u + s + n + idle;
+            }
+            if (total > 0) _cpuBot->load = (double)busy / (double)total;
+            vm_deallocate(mach_task_self(), (vm_address_t)_prevCpuInfo,
+                          _prevCpuInfoCnt * sizeof(integer_t));
+        }
+        _prevCpuInfo = info;
+        _prevCpuInfoCnt = infoCnt;
+    }
+
+    // --- GPU（読めなければ0扱い＝静止） ---
+    double gpu = readGpuUtilization();
+    _gpuBot->load = gpu < 0 ? 0 : gpu;
+
+    // --- ネットワーク（en* の受信/送信バイトの差分） ---
+    uint64_t inB = 0, outB = 0;
+    struct ifaddrs *addrs = NULL;
+    if (getifaddrs(&addrs) == 0) {
+        for (struct ifaddrs *a = addrs; a; a = a->ifa_next) {
+            if (!a->ifa_addr || a->ifa_addr->sa_family != AF_LINK) continue;
+            if (strncmp(a->ifa_name, "en", 2) != 0) continue;
+            struct if_data *d = (struct if_data *)a->ifa_data;
+            if (!d) continue;
+            inB += d->ifi_ibytes;
+            outB += d->ifi_obytes;
+        }
+        freeifaddrs(addrs);
+    }
+    NSDate *now = [NSDate date];
+    if (_prevNetAt) {
+        double dt = [now timeIntervalSinceDate:_prevNetAt];
+        if (dt > 0 && inB >= _prevNetIn && outB >= _prevNetOut) {
+            _downRate = (inB - _prevNetIn) / dt;
+            _upRate = (outB - _prevNetOut) / dt;
+        }
+    }
+    _prevNetIn = inB; _prevNetOut = outB; _prevNetAt = now;
+}
+
+static NSString *rateString(double bps) {
+    if (bps >= 1e6) return [NSString stringWithFormat:@"%.1f MB/s", bps / 1e6];
+    if (bps >= 1e3) return [NSString stringWithFormat:@"%.0f KB/s", bps / 1e3];
+    return [NSString stringWithFormat:@"%.0f B/s", bps];
+}
+
+- (void)updateMenuTitles {
+    _miCpu.title = [NSString stringWithFormat:@"CPU: %.1f%%（%@）",
+                    _cpuBot->load * 100.0, [self nameForLevel:_cpuBot->level]];
+    _miGpu.title = [NSString stringWithFormat:@"GPU: %.1f%%（%@）",
+                    _gpuBot->load * 100.0, [self nameForLevel:_gpuBot->level]];
+    if (_jamTimer) _miJam.title = @"♪ ジャム中";
+    else if (_cpuBot->level == 4 && _gpuBot->level == 4) _miJam.title = @"二体とも退勤";
+    else _miJam.title = @"ソロ";
+
+    // アクティビティモニタの「使用済みメモリ」と同じ式:
+    // (アプリ内部 − パージ可能) + 確保済み + 圧縮
+    vm_statistics64_data_t vm;
+    mach_msg_type_number_t cnt = HOST_VM_INFO64_COUNT;
+    if (host_statistics64(mach_host_self(), HOST_VM_INFO64,
+                          (host_info64_t)&vm, &cnt) == KERN_SUCCESS) {
+        uint64_t page = vm_kernel_page_size;
+        uint64_t used = ((uint64_t)vm.internal_page_count - vm.purgeable_count +
+                         vm.wire_count + vm.compressor_page_count) * page;
+        uint64_t total = 0; size_t len = sizeof(total);
+        sysctlbyname("hw.memsize", &total, &len, NULL, 0);
+        _miMem.title = [NSString stringWithFormat:@"メモリ: %.1f / %.1f GB",
+                        used / 1e9, total / 1e9];
+    }
+
+    NSURL *root = [NSURL fileURLWithPath:@"/"];
+    NSDictionary *vals = [root resourceValuesForKeys:
+        @[NSURLVolumeAvailableCapacityForImportantUsageKey] error:NULL];
+    NSNumber *free = vals[NSURLVolumeAvailableCapacityForImportantUsageKey];
+    if (free) _miDisk.title = [NSString stringWithFormat:@"空き容量: %.1f GB",
+                               free.doubleValue / 1e9];
+
+    _miNet.title = [NSString stringWithFormat:@"↓ %@   ↑ %@",
+                    rateString(_downRate), rateString(_upRate)];
+}
+
+- (void)menuWillOpen:(NSMenu *)menu {
+    _menuOpen = YES;
+    [self updateMenuTitles];
+}
+
+- (void)menuDidClose:(NSMenu *)menu {
+    _menuOpen = NO;
+}
+
+- (void)openActivityMonitor:(id)sender {
+    NSURL *url = [NSURL fileURLWithPath:
+        @"/System/Applications/Utilities/Activity Monitor.app"];
+    [[NSWorkspace sharedWorkspace] openApplicationAtURL:url
+        configuration:[NSWorkspaceOpenConfiguration configuration]
+        completionHandler:nil];
+}
+
+@end
+
+int main(void) {
+    @autoreleasepool {
+        NSApplication *app = [NSApplication sharedApplication];
+        [app setActivationPolicy:NSApplicationActivationPolicyAccessory];
+        UmaApp *delegate = [[UmaApp alloc] init];
+        app.delegate = delegate;
+        [app run];
+    }
+    return 0;
+}
